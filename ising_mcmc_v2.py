@@ -197,7 +197,7 @@ if __name__ == "__main__":
                 {
                     "eq_steps": eq_steps,
                     "sim_steps": sim_steps,
-                    "kB": sim_steps,
+                    "kB": kB,
                     "coupl_const": coupl_const,
                     "temp": temp,
                     "lat_size": lat_size,
