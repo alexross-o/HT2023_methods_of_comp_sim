@@ -19,7 +19,7 @@ from datetime import timedelta
 # %%
 
 
-@dataclass
+@dataclass(frozen=True)
 class MonteCarloResult:
 
     results: List[npt.NDArray[np.int_]]
