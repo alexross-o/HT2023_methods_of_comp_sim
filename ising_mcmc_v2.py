@@ -7,13 +7,16 @@ import numpy.typing as npt
 import os
 import logging
 import pickle
+import matplotlib.pyplot as plt
 
 
 from tqdm import tqdm
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Tuple
 from datetime import timedelta
+from matplotlib.animation import FuncAnimation
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 # %%
@@ -22,7 +25,7 @@ from datetime import timedelta
 @dataclass(frozen=True)
 class MonteCarloResult:
 
-    results: List[npt.NDArray[np.int_]]
+    results: npt.NDArray[np.int_]
     lattice_size: float
     temp: float
     beta: float
@@ -31,6 +34,52 @@ class MonteCarloResult:
     eq_steps: int
     sim_steps: int
     flip_frac: float
+
+    def show_lattice(
+        self,
+        step: int,
+        cmap: str = "viridis",
+        figsize: Tuple[float, float] = (8, 8),
+        dpi: int = 300,
+    ) -> Tuple[plt.Figure, plt.Axes, plt.Colorbar]:
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        im = ax.imshow(self.results[step], cmap=cmap, vmin=-1, vmax=1, origin="lower")
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size=f"{5}%", pad=0.2)
+        cbar = plt.colorbar(im, cax=cax, orientation="vertical")
+
+        return fig, ax, cbar
+
+    def animate_lattice(
+        self,
+        filename: str,
+        fps: int = 200,
+        cmap: str = "viridis",
+        figsize: Tuple[float, float] = (8, 8),
+        dpi: int = 200,  # animation scales badly with dpi
+    ) -> None:
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        im = ax.imshow(self.results[0], cmap=cmap, vmin=-1, vmax=1, origin="lower")
+
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size=f"{5}%", pad=0.2)
+        cbar = plt.colorbar(im, cax=cax, orientation="vertical")
+        title = ax.set_title(f"Step 0")
+
+        def update(step):
+            im.set_array(self.results[step + 1])
+            title.set_text(f"Step {step + 1}")
+
+            return im, title
+
+        anim = FuncAnimation(fig, update, frames=len(self.results) - 1, blit=True)
+
+        anim.save(
+            f"{filename}.mp4",
+            writer="ffmpeg",  # may need to install this and tell matplotlib where the writer path is
+            fps=fps,
+        )
 
 
 def calc_energy(lattice: np.ndarray, J: float = 1.0) -> float:
@@ -101,16 +150,18 @@ def run_mc(
             lattice=curr_lattice, beta=beta, j_coupl=coupl_const, flip_frac=flip_frac
         )
 
-    sim_results = [curr_lattice]
+    sim_results = np.full(
+        (sim_steps + 1, lat_size, lat_size), fill_value=np.nan, dtype=np.int_
+    )
 
-    for i in range(sim_steps):
-        sim_results.append(
-            mc_step(
-                lattice=sim_results[-1],
-                beta=beta,
-                j_coupl=coupl_const,
-                flip_frac=flip_frac,
-            )
+    sim_results[0] = curr_lattice
+
+    for i in range(1, sim_steps + 1):
+        sim_results[i] = mc_step(
+            lattice=sim_results[i - 1],
+            beta=beta,
+            j_coupl=coupl_const,
+            flip_frac=flip_frac,
         )
 
     gc.collect()
@@ -178,7 +229,7 @@ if __name__ == "__main__":
         30000  # probably needs to be much higher, I can't be bothered to investigate
     )
     sim_steps = (
-        100000  # probably needs to be much higher, I can't be bothered to investigate
+        1000000  # probably needs to be much higher, I can't be bothered to investigate
     )
     kB = 1.0  # change as needed
     coupl_const = 1.0  # change as needed
@@ -197,7 +248,7 @@ if __name__ == "__main__":
                 {
                     "eq_steps": eq_steps,
                     "sim_steps": sim_steps,
-                    "kB": kB,
+                    "kB": sim_steps,
                     "coupl_const": coupl_const,
                     "temp": temp,
                     "lat_size": lat_size,
@@ -205,6 +256,10 @@ if __name__ == "__main__":
                 }
             )
 
+    # the issue with parallelising it this way is that each lattice always starts "cold"
+    # if each worker was given a range of temperatures you could feed the end result of the last temp
+    # into the starting state of the next temp, this would save equilibration time
+    # or you could just equillibrate for a long time...
     results = parallel_process(
         arg_list=args, function=run_mc, n_jobs=os.cpu_count() - 2 or 1
     )
